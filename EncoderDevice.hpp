@@ -157,7 +157,7 @@ public:
         // on RPi does not handle a hard per-frame CPB limit well and produces
         // heavy blocking artefacts when it cannot meet the constraint.
         ctrls[5].id    = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
-        ctrls[5].value = V4L2_MPEG_VIDEO_H264_LEVEL_3_1;
+        ctrls[5].value = V4L2_MPEG_VIDEO_H264_LEVEL_4_0;
 
         struct v4l2_ext_controls ext_ctrls = {};
         ext_ctrls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
