@@ -167,7 +167,10 @@ public:
         if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &ext_ctrls) == -1) {
             std::cerr << "Warning: Failed to set some H.264 parameters (errno=" << errno << ")." << std::endl;
         } else {
-            std::cout << "H.264 controls applied: CBR 2Mbps, GOP 30, Baseline L4.0, SPS/PPS repeated." << std::endl;
+            std::cout << "H.264 controls applied:"
+                      << " CBR " << (ctrls[1].value / 1000000) << " Mbps"
+                      << ", GOP " << ctrls[3].value
+                      << ", profile Baseline, level 4.0, SPS/PPS repeated." << std::endl;
         }
         return true;
     }
