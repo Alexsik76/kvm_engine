@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cerrno>
 #include <sys/mman.h>
+#include <sys/time.h>   // struct timeval
 #include <vector>
 #include <fcntl.h>
 #include <unistd.h>
@@ -246,14 +247,20 @@ public:
         return true;
     }
 
-    bool queueOutputBuffer(int index, int dmabuf_fd, uint32_t bytesused) {
+    // timestamp: the wall-clock time the raw frame was captured (from CaptureDevice).
+    // The V4L2 M2M spec requires the driver to copy buf.timestamp from the OUTPUT
+    // queue to the corresponding CAPTURE queue entry, so we can read it back in
+    // dequeueCaptureBuffer() and use it as the MPEG-TS PTS/PCR value.
+    bool queueOutputBuffer(int index, int dmabuf_fd, uint32_t bytesused,
+                           const struct timeval& timestamp) {
         struct v4l2_buffer buf    = {};
         struct v4l2_plane  planes[1] = {};
-        buf.type     = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-        buf.memory   = V4L2_MEMORY_DMABUF;
-        buf.index    = index;
-        buf.length   = 1;
-        buf.m.planes = planes;
+        buf.type      = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        buf.memory    = V4L2_MEMORY_DMABUF;
+        buf.index     = index;
+        buf.length    = 1;
+        buf.m.planes  = planes;
+        buf.timestamp = timestamp;  // propagate capture time → encoder → muxer
         buf.m.planes[0].m.fd      = dmabuf_fd;
         buf.m.planes[0].bytesused = bytesused;
         // length must be the real buffer size, NOT bytesused
@@ -278,7 +285,9 @@ public:
         return buf.index;
     }
 
-    int dequeueCaptureBuffer(uint32_t& bytes_used) {
+    // timestamp: the capture wall-clock time, copied by the driver from the
+    //            matching OUTPUT buffer we queued in queueOutputBuffer().
+    int dequeueCaptureBuffer(uint32_t& bytes_used, struct timeval& timestamp) {
         struct v4l2_buffer buf    = {};
         struct v4l2_plane  planes[1] = {};
         buf.type     = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -290,6 +299,7 @@ public:
             return -1;
         }
         bytes_used = buf.m.planes[0].bytesused;
+        timestamp  = buf.timestamp;  // read back the propagated capture time
         return buf.index;
     }
 
