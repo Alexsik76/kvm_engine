@@ -26,10 +26,8 @@ int main() {
     const uint32_t    height      = 720;
     const uint32_t    format      = V4L2_PIX_FMT_UYVY;
     const std::string encoderNode = "/dev/video11";
-    // fps: set to match your HDMI source (ffplay reported 25 fps previously).
-    // If source is 30fps-native, change to 30. The encoder uses this value
-    // to build the H.264 SPS VUI timing — wrong fps causes display flicker.
-    const uint32_t    fps         = 25;
+    // fps: capture device confirmed at 60fps via v4l2-ctl --stream-mmap
+    const uint32_t    fps         = 60;
     // 3 buffers: one frame margin over the 2-buffer minimum.
     // Prevents encoder starvation if TCP sendData() blocks for >1 frame period.
     const uint32_t    bufCount    = 3;

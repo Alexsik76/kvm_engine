@@ -132,30 +132,26 @@ public:
         // sizes uniform, which prevents VLC's 5-frame catch-up drops.
         struct v4l2_ext_control ctrls[6] = {};
 
-        // CBR: mandatory for predictable frame sizes and TCP pacing
+        // CBR: mandatory for predictable frame sizes and TCP pacing over internet
         ctrls[0].id    = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
         ctrls[0].value = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
 
         ctrls[1].id    = V4L2_CID_MPEG_VIDEO_BITRATE;
-        ctrls[1].value = 4000000; // 4 Mbps: more headroom at 720p for fewer blocking artefacts
+        ctrls[1].value = 2000000; // 2 Mbps — stable for LAN and low-upload internet
 
         // Send SPS/PPS with every IDR so decoder can sync immediately
         ctrls[2].id    = V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER;
         ctrls[2].value = 1;
 
-        // GOP = 10 frames (~400 ms at 25 fps).
-        // Shorter GOP = smaller IDR burst = less TCP jitter = less VLC lag.
+        // GOP = 30 frames (500ms at 60fps)
         ctrls[3].id    = V4L2_CID_MPEG_VIDEO_H264_I_PERIOD;
-        ctrls[3].value = 10;
+        ctrls[3].value = 30;
 
         // Baseline profile: no B-frames, no reorder delay
         ctrls[4].id    = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
         ctrls[4].value = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
 
-        // Level 3.1: caps reference frames at 720p, reduces decoder delay.
-        // NOTE: CPB_SIZE is intentionally NOT set here — the hardware encoder
-        // on RPi does not handle a hard per-frame CPB limit well and produces
-        // heavy blocking artefacts when it cannot meet the constraint.
+        // Level 4.0: supports 720p@60fps
         ctrls[5].id    = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
         ctrls[5].value = V4L2_MPEG_VIDEO_H264_LEVEL_4_0;
 
@@ -170,7 +166,7 @@ public:
             std::cout << "H.264 controls applied:"
                       << " CBR " << (ctrls[1].value / 1000000) << " Mbps"
                       << ", GOP " << ctrls[3].value
-                      << ", profile Baseline, level 4.0, SPS/PPS repeated." << std::endl;
+                      << ", Profile Baseline, Level 4.0, SPS/PPS repeated." << std::endl;
         }
         return true;
     }
