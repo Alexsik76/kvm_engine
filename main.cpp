@@ -25,7 +25,10 @@ int main() {
     const uint32_t    height      = 720;
     const uint32_t    format      = V4L2_PIX_FMT_UYVY;
     const std::string encoderNode = "/dev/video11";
-    const uint32_t    bufCount    = 4;
+    // 2 buffers: minimum to keep capture + encoder simultaneously busy.
+    // Each extra buffer adds one full frame period (33 ms at 30 fps) of
+    // pipeline latency. 4 buffers was adding ~130 ms before any network delay.
+    const uint32_t    bufCount    = 2;
 
     // ── Capture device ──────────────────────────────────────────────────────
     CaptureDevice capture(videoNode, width, height, format);

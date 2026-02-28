@@ -104,31 +104,42 @@ public:
     }
 
     bool setupH264Controls() {
-        // Extended controls: bitrate mode, bitrate, GOP, SPS/PPS, profile, level
-        struct v4l2_ext_control ctrls[6] = {};
+        // ── KVM-optimised H.264 controls — latency over quality ──────────────
+        // Key insight: periodic latency spikes are caused by large IDR frames
+        // creating a TCP burst. Reducing GOP and capping CPB size keeps frame
+        // sizes uniform, which prevents VLC's 5-frame catch-up drops.
+        struct v4l2_ext_control ctrls[7] = {};
 
-        // Force Constant Bitrate for stable, predictable network load
+        // CBR: mandatory for predictable frame sizes and TCP pacing
         ctrls[0].id    = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
         ctrls[0].value = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
 
         ctrls[1].id    = V4L2_CID_MPEG_VIDEO_BITRATE;
-        ctrls[1].value = 2000000; // 2 Mbps
+        ctrls[1].value = 2000000; // 2 Mbps — adjust if LAN allows more
 
-        // Send SPS/PPS with every IDR — required for VLC to decode without waiting
+        // Send SPS/PPS with every IDR so VLC can sync immediately
         ctrls[2].id    = V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER;
         ctrls[2].value = 1;
 
-        // GOP of 30 frames (1 second at 30 fps) — one keyframe per second
+        // GOP = 10 frames (333 ms at 30 fps).
+        // Was 30 → IDR every 1 s caused a large burst, making ~5 P-frames
+        // arrive late. Shorter GOP = smaller IDR burst = less TCP jitter.
         ctrls[3].id    = V4L2_CID_MPEG_VIDEO_H264_I_PERIOD;
-        ctrls[3].value = 30;
+        ctrls[3].value = 10;
 
-        // Baseline profile: no B-frames → lowest encode/decode latency
+        // Baseline profile: no B-frames, no reorder delay
         ctrls[4].id    = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
         ctrls[4].value = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
 
-        // Level 4.0 — supports up to 1080p30, safe for 720p streaming
+        // Level 3.1 — caps reference frames at 720p, reduces decoder delay
         ctrls[5].id    = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
-        ctrls[5].value = V4L2_MPEG_VIDEO_H264_LEVEL_4_0;
+        ctrls[5].value = V4L2_MPEG_VIDEO_H264_LEVEL_3_1;
+
+        // CPB (Coded Picture Buffer) = 200 KB.
+        // Limits how large any single frame can burst above the CBR average.
+        // Without this, IDR frames can be 10x bigger than P-frames even in CBR.
+        ctrls[6].id    = V4L2_CID_MPEG_VIDEO_H264_CPB_SIZE;
+        ctrls[6].value = 200; // kbits → 200 kbits = 25 KB hard ceiling per frame
 
         struct v4l2_ext_controls ext_ctrls = {};
         ext_ctrls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
