@@ -277,8 +277,8 @@ public:
 
     // timestamp: the wall-clock time the raw frame was captured (from CaptureDevice).
     // The V4L2 M2M spec requires the driver to copy buf.timestamp from the OUTPUT
-    // queue to the corresponding CAPTURE queue entry, so we can read it back in
-    // dequeueCaptureBuffer() and use it as the MPEG-TS PTS/PCR value.
+    // queue to the corresponding CAPTURE queue entry, allowing us to track frame
+    // latency end-to-end.
     bool queueOutputBuffer(int index, int dmabuf_fd, uint32_t bytesused,
                            const struct timeval& timestamp) {
         struct v4l2_buffer buf    = {};
@@ -288,7 +288,7 @@ public:
         buf.index     = index;
         buf.length    = 1;
         buf.m.planes  = planes;
-        buf.timestamp = timestamp;  // propagate capture time → encoder → muxer
+        buf.timestamp = timestamp;  // propagate capture time → encoder
         buf.m.planes[0].m.fd      = dmabuf_fd;
         buf.m.planes[0].bytesused = bytesused;
         // length must be the real buffer size, NOT bytesused

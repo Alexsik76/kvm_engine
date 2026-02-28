@@ -89,7 +89,7 @@ int main() {
 
         // 1. Raw frame ready → queue to encoder
         //    We propagate the V4L2 buffer timestamp so the encoder driver
-        //    copies it to the CAPTURE buffer (useful for future timestamping).
+        //    copies it to the CAPTURE buffer.
         if (fds[0].revents & POLLIN) {
             uint32_t       bytes_used = 0;
             struct timeval cap_ts     = {};
@@ -118,27 +118,28 @@ int main() {
                 if (frame_data && h264_bytes > 0) {
                     // Send raw H.264 Annex-B bytes directly — no container overhead
                     if (!server.sendData(frame_data, h264_bytes)) {
-                        std::cout << "\nClient disconnected. Waiting for reconnect..." << std::endl;
+                        auto now = std::chrono::steady_clock::now();
+                        auto sec = std::chrono::duration_cast<std::chrono::seconds>(now - t_start).count();
+                        if (sec > 0) {
+                            std::cout << "\nSession ended. Average bitrate: " 
+                                      << (total_bytes * 8 / sec / 1000) << " kbps" << std::endl;
+                        }
+
+                        std::cout << "Client disconnected. Waiting for reconnect..." << std::endl;
                         encoder.queueCaptureBuffer(enc_cap_idx);
+                        
                         // Reset bitrate counters for the new session
                         total_bytes = 0;
                         t_start     = std::chrono::steady_clock::now();
+                        
                         if (!server.waitForNextClient()) {
                             std::cerr << "Failed to accept next client. Stopping." << std::endl;
                             break;
                         }
                         continue;
                     }
-                    // Bitrate measurement — runs on every successfully sent frame
+                    // Accumulate bits for the session average
                     total_bytes += h264_bytes;
-                    auto now = std::chrono::steady_clock::now();
-                    auto sec = std::chrono::duration_cast<std::chrono::seconds>(
-                                   now - t_start).count();
-                    if (sec > 0 && sec % 5 == 0) {
-                        std::cout << "Bitrate: "
-                                  << (total_bytes * 8 / sec / 1000)
-                                  << " kbps\n";
-                    }
                 }
                 encoder.queueCaptureBuffer(enc_cap_idx);
             }

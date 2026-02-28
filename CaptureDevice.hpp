@@ -155,8 +155,7 @@ public:
     // Returns the buffer index, or -1 on timeout/error.
     // bytes_used: number of valid bytes in the buffer.
     // timestamp:  wall-clock time the frame was captured (from V4L2 driver).
-    //             Pass this through to the encoder and then to MpegTsMuxer::timevalToPts()
-    //             so VLC gets a proper PCR/PTS reference clock.
+    //             Can be used for latency measurement or future container muxing.
     int dequeueBuffer(uint32_t& bytes_used, struct timeval& timestamp) {
         struct pollfd fds;
         fds.fd     = fd;
