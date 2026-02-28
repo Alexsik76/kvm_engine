@@ -1,0 +1,5 @@
+*.o
+kvm_engine
+stream_dump.h264
+.vscode/
+build/
