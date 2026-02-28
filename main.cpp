@@ -25,16 +25,20 @@ int main() {
     const uint32_t    height      = 720;
     const uint32_t    format      = V4L2_PIX_FMT_UYVY;
     const std::string encoderNode = "/dev/video11";
-    // 2 buffers: minimum to keep capture + encoder simultaneously busy.
-    // Each extra buffer adds one full frame period (33 ms at 30 fps) of
-    // pipeline latency. 4 buffers was adding ~130 ms before any network delay.
-    const uint32_t    bufCount    = 2;
+    // fps: set to match your HDMI source (ffplay reported 25 fps previously).
+    // If source is 30fps-native, change to 30. The encoder uses this value
+    // to build the H.264 SPS VUI timing — wrong fps causes display flicker.
+    const uint32_t    fps         = 30;
+    // 3 buffers: one frame margin over the 2-buffer minimum.
+    // Prevents encoder starvation if TCP sendData() blocks for >1 frame period.
+    const uint32_t    bufCount    = 3;
 
     // ── Capture device ──────────────────────────────────────────────────────
     CaptureDevice capture(videoNode, width, height, format);
 
     if (!capture.openDevice())                 return 1;
     if (!capture.configureFormat())            return 1;
+    capture.configureFrameRate(fps);           // set SPS timing before encoder reads it
     if (!capture.requestBuffers(bufCount))     return 1;
     if (!capture.mapAndQueueBuffers(bufCount)) return 1;
     if (!capture.startStreaming())             return 1;
@@ -46,6 +50,7 @@ int main() {
 
     if (!encoder.openDevice())                    return 1;
     if (!encoder.configureFormats(width, height)) return 1;
+    encoder.configureFrameRate(fps);              // must be before setupH264Controls()
     encoder.setupH264Controls();
     if (!encoder.requestBuffers(bufCount))        return 1;
     if (!encoder.mapCaptureBuffers(bufCount))     return 1;

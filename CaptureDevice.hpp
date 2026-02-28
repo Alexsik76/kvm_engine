@@ -71,6 +71,28 @@ public:
         return true;
     }
 
+    // Set the capture frame rate via VIDIOC_S_PARM.
+    // This is critical: the H.264 encoder reads the capture fps when building
+    // the SPS VUI timing info. Without this call the SPS defaults to 60fps,
+    // causing ffplay to calculate wrong PTS values → flickering & frame drops.
+    bool configureFrameRate(uint32_t fps) {
+        struct v4l2_streamparm parm = {};
+        parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        parm.parm.capture.timeperframe.numerator   = 1;
+        parm.parm.capture.timeperframe.denominator = fps;
+
+        if (ioctl(fd, VIDIOC_S_PARM, &parm) == -1) {
+            std::cerr << "Warning: Failed to set frame rate on " << devicePath
+                      << " (errno=" << errno << ")" << std::endl;
+            return false;  // non-fatal: capture may still work at device default
+        }
+
+        uint32_t actual = parm.parm.capture.timeperframe.denominator;
+        std::cout << "Capture frame rate set to " << actual << " fps on "
+                  << devicePath << std::endl;
+        return true;
+    }
+
     bool requestBuffers(uint32_t count) {
         struct v4l2_requestbuffers req = {};
         req.count  = count;

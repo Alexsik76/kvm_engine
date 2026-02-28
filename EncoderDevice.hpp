@@ -103,27 +103,48 @@ public:
         return true;
     }
 
+    // Set the encoder OUTPUT queue frame rate via VIDIOC_S_PARM.
+    // Must be called AFTER configureFormats() and BEFORE setupH264Controls().
+    // The encoder uses this fps to fill the H.264 SPS VUI timing fields;
+    // without it the SPS defaults to 60fps regardless of actual capture rate,
+    // causing ffplay/VLC to compute wrong display timestamps.
+    bool configureFrameRate(uint32_t fps) {
+        struct v4l2_streamparm parm = {};
+        parm.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        parm.parm.output.timeperframe.numerator   = 1;
+        parm.parm.output.timeperframe.denominator = fps;
+
+        if (ioctl(fd, VIDIOC_S_PARM, &parm) == -1) {
+            std::cerr << "Warning: Failed to set encoder frame rate (errno="
+                      << errno << ")" << std::endl;
+            return false;  // non-fatal
+        }
+
+        uint32_t actual = parm.parm.output.timeperframe.denominator;
+        std::cout << "Encoder frame rate set to " << actual << " fps" << std::endl;
+        return true;
+    }
+
     bool setupH264Controls() {
         // ── KVM-optimised H.264 controls — latency over quality ──────────────
         // Key insight: periodic latency spikes are caused by large IDR frames
         // creating a TCP burst. Reducing GOP and capping CPB size keeps frame
         // sizes uniform, which prevents VLC's 5-frame catch-up drops.
-        struct v4l2_ext_control ctrls[7] = {};
+        struct v4l2_ext_control ctrls[6] = {};
 
         // CBR: mandatory for predictable frame sizes and TCP pacing
         ctrls[0].id    = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
         ctrls[0].value = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
 
         ctrls[1].id    = V4L2_CID_MPEG_VIDEO_BITRATE;
-        ctrls[1].value = 2000000; // 2 Mbps — adjust if LAN allows more
+        ctrls[1].value = 4000000; // 4 Mbps: more headroom at 720p for fewer blocking artefacts
 
-        // Send SPS/PPS with every IDR so VLC can sync immediately
+        // Send SPS/PPS with every IDR so decoder can sync immediately
         ctrls[2].id    = V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER;
         ctrls[2].value = 1;
 
-        // GOP = 10 frames (333 ms at 30 fps).
-        // Was 30 → IDR every 1 s caused a large burst, making ~5 P-frames
-        // arrive late. Shorter GOP = smaller IDR burst = less TCP jitter.
+        // GOP = 10 frames (~400 ms at 25 fps).
+        // Shorter GOP = smaller IDR burst = less TCP jitter = less VLC lag.
         ctrls[3].id    = V4L2_CID_MPEG_VIDEO_H264_I_PERIOD;
         ctrls[3].value = 10;
 
@@ -131,15 +152,12 @@ public:
         ctrls[4].id    = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
         ctrls[4].value = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
 
-        // Level 3.1 — caps reference frames at 720p, reduces decoder delay
+        // Level 3.1: caps reference frames at 720p, reduces decoder delay.
+        // NOTE: CPB_SIZE is intentionally NOT set here — the hardware encoder
+        // on RPi does not handle a hard per-frame CPB limit well and produces
+        // heavy blocking artefacts when it cannot meet the constraint.
         ctrls[5].id    = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
         ctrls[5].value = V4L2_MPEG_VIDEO_H264_LEVEL_3_1;
-
-        // CPB (Coded Picture Buffer) = 200 KB.
-        // Limits how large any single frame can burst above the CBR average.
-        // Without this, IDR frames can be 10x bigger than P-frames even in CBR.
-        ctrls[6].id    = V4L2_CID_MPEG_VIDEO_H264_CPB_SIZE;
-        ctrls[6].value = 200; // kbits → 200 kbits = 25 KB hard ceiling per frame
 
         struct v4l2_ext_controls ext_ctrls = {};
         ext_ctrls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
