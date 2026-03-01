@@ -1,11 +1,11 @@
 #include "CaptureDevice.hpp"
 #include "EncoderDevice.hpp"
-#include "TcpServer.hpp"
 #include <linux/videodev2.h>
 #include <sys/time.h>
 #include <iostream>
 #include <poll.h>
 #include <chrono>
+#include <cstdio>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // KVM Engine — streams raw H.264 over TCP with minimum latency.
@@ -29,7 +29,7 @@ int main() {
     // fps: capture device confirmed at 60fps via v4l2-ctl --stream-mmap
     const uint32_t    fps         = 60;
     // 3 buffers: one frame margin over the 2-buffer minimum.
-    // Prevents encoder starvation if TCP sendData() blocks for >1 frame period.
+    // Prevents encoder starvation if stdout writes block for >1 frame period.
     const uint32_t    bufCount    = 3;
 
     // ── Capture device ──────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ int main() {
     if (!capture.mapAndQueueBuffers(bufCount)) return 1;
     if (!capture.startStreaming())             return 1;
 
-    std::cout << "Capture initialised." << std::endl;
+    std::cerr << "Capture initialised." << std::endl;
 
     // ── Encoder device ──────────────────────────────────────────────────────
     EncoderDevice encoder(encoderNode);
@@ -55,20 +55,9 @@ int main() {
     if (!encoder.mapCaptureBuffers(bufCount))     return 1;
     if (!capture.exportBuffers())                 return 1;
 
-    // ── TCP server ──────────────────────────────────────────────────────────
-    TcpServer server(8080);
-    if (!server.start()) {
-        std::cerr << "Failed to start TCP server." << std::endl;
-        return 1;
-    }
-
-    server.waitForClient();
-
     if (!encoder.startStreaming()) return 1;
-    uint64_t total_bytes  = 0;
-    auto     t_start      = std::chrono::steady_clock::now();
 
-    std::cout << "Streaming raw H.264 over TCP... Press Ctrl+C to stop." << std::endl;
+    std::cerr << "Streaming raw H.264 to stdout... Press Ctrl+C to stop." << std::endl;
 
     // ── Main loop ───────────────────────────────────────────────────────────
     // poll() on both fds simultaneously — zero CPU waste when idle.
@@ -116,30 +105,8 @@ int main() {
             if (enc_cap_idx != -1) {
                 void* frame_data = encoder.getCaptureBufferPointer(enc_cap_idx);
                 if (frame_data && h264_bytes > 0) {
-                    // Send raw H.264 Annex-B bytes directly — no container overhead
-                    if (!server.sendData(frame_data, h264_bytes)) {
-                        auto now = std::chrono::steady_clock::now();
-                        auto sec = std::chrono::duration_cast<std::chrono::seconds>(now - t_start).count();
-                        if (sec > 0) {
-                            std::cout << "\nSession ended. Average bitrate: " 
-                                      << (total_bytes * 8 / sec / 1000) << " kbps" << std::endl;
-                        }
-
-                        std::cout << "Client disconnected. Waiting for reconnect..." << std::endl;
-                        encoder.queueCaptureBuffer(enc_cap_idx);
-                        
-                        // Reset bitrate counters for the new session
-                        total_bytes = 0;
-                        t_start     = std::chrono::steady_clock::now();
-                        
-                        if (!server.waitForNextClient()) {
-                            std::cerr << "Failed to accept next client. Stopping." << std::endl;
-                            break;
-                        }
-                        continue;
-                    }
-                    // Accumulate bits for the session average
-                    total_bytes += h264_bytes;
+                    std::fwrite(frame_data, 1, h264_bytes, stdout);
+                    std::fflush(stdout);
                 }
                 encoder.queueCaptureBuffer(enc_cap_idx);
             }
