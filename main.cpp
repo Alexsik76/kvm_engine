@@ -37,7 +37,6 @@ int main() {
 
     if (!capture.openDevice())                 return 1;
     if (!capture.configureFormat())            return 1;
-    capture.configureFrameRate(fps);           // set SPS timing before encoder reads it
     if (!capture.requestBuffers(bufCount))     return 1;
     if (!capture.mapAndQueueBuffers(bufCount)) return 1;
     if (!capture.startStreaming())             return 1;
