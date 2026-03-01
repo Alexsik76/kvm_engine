@@ -6,6 +6,7 @@
 #include <poll.h>
 #include <chrono>
 #include <cstdio>
+#include "Config.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // KVM Engine — streams raw H.264 over TCP with minimum latency.
@@ -21,37 +22,26 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 int main() {
-    const std::string videoNode   = "/dev/video0";
-    const uint32_t    width       = 1280;
-    const uint32_t    height      = 720;
-    const uint32_t    format      = V4L2_PIX_FMT_UYVY;
-    const std::string encoderNode = "/dev/video11";
-    // fps: capture device confirmed at 60fps via v4l2-ctl --stream-mmap
-    const uint32_t    fps         = 60;
-    // 3 buffers: one frame margin over the 2-buffer minimum.
-    // Prevents encoder starvation if stdout writes block for >1 frame period.
-    const uint32_t    bufCount    = 3;
-
     // ── Capture device ──────────────────────────────────────────────────────
-    CaptureDevice capture(videoNode, width, height, format);
+    CaptureDevice capture(Config::videoNode, Config::width, Config::height, Config::format);
 
     if (!capture.openDevice())                 return 1;
     if (!capture.configureFormat())            return 1;
-    if (!capture.requestBuffers(bufCount))     return 1;
-    if (!capture.mapAndQueueBuffers(bufCount)) return 1;
+    if (!capture.requestBuffers(Config::bufCount))     return 1;
+    if (!capture.mapAndQueueBuffers(Config::bufCount)) return 1;
     if (!capture.startStreaming())             return 1;
 
     std::cerr << "Capture initialised." << std::endl;
 
     // ── Encoder device ──────────────────────────────────────────────────────
-    EncoderDevice encoder(encoderNode);
+    EncoderDevice encoder(Config::encoderNode);
 
     if (!encoder.openDevice())                    return 1;
-    if (!encoder.configureFormats(width, height)) return 1;
-    encoder.configureFrameRate(fps);              // must be before setupH264Controls()
+    if (!encoder.configureFormats(Config::width, Config::height)) return 1;
+    encoder.configureFrameRate(Config::fps);              // must be before setupH264Controls()
     encoder.setupH264Controls();
-    if (!encoder.requestBuffers(bufCount))        return 1;
-    if (!encoder.mapCaptureBuffers(bufCount))     return 1;
+    if (!encoder.requestBuffers(Config::bufCount))        return 1;
+    if (!encoder.mapCaptureBuffers(Config::bufCount))     return 1;
     if (!capture.exportBuffers())                 return 1;
 
     if (!encoder.startStreaming()) return 1;
