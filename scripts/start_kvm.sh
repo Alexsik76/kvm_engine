@@ -1,27 +1,61 @@
 #!/bin/bash
 
+# Industrial Startup Script for IP-KVM
+# Responsibilities: Hardware Init, USB Gadget Setup, HID Server, and Video Streaming.
+# Adheres to SRP: Orchestrates system components without internal logic.
+
 set -e
 
-echo "=== KVM System Startup ==="
+PROJECT_ROOT="/home/alex/kvm_engine"
+HID_SERVER_BIN="$PROJECT_ROOT/hid_server"
+MEDIAMTX_DIR="/home/alex/mediamtx"
 
-echo "[1/3] Initializing hardware..."
-if [ -x "/home/alex/kvm_engine/scripts/init_kvm.sh" ]; then
-    /home/alex/kvm_engine/scripts/init_kvm.sh
+echo "=== IP-KVM Integrated System Startup ==="
+
+# 1. Hardware Video Init
+echo "[1/4] Initializing Video Bridge (TC358743)..."
+sudo "$PROJECT_ROOT/scripts/init_kvm.sh"
+
+# 2. USB Gadget Init
+echo "[2/4] Initializing USB HID Gadget..."
+sudo "$PROJECT_ROOT/scripts/setup_usb_gadget.sh"
+
+# 3. Compile/Build (Optional)
+if [ "$1" == "--build" ]; then
+    echo "[3/4] Rebuilding components..."
+    
+    # Build C++ Video Engine
+    cd "$PROJECT_ROOT"
+    g++ -O3 -mcpu=cortex-a72 -mtune=cortex-a72 -flto -Wall -Wextra \
+        src/main.cpp src/CaptureDevice.cpp src/EncoderDevice.cpp -o kvm_engine
+    
+    # Build Go HID Server (Explicit output path to project root)
+    cd "$PROJECT_ROOT/src/hid_server"
+    go build -o "$HID_SERVER_BIN" main.go
+    
+    echo "Build complete."
 else
-    echo "Error: init_kvm.sh not found or not executable."
+    echo "[3/4] Skipping build."
+fi
+
+# 4. Starting Services
+echo "[4/4] Launching Services..."
+
+# Verify HID server exists before execution
+if [ ! -f "$HID_SERVER_BIN" ]; then
+    echo "Error: HID server binary not found at $HID_SERVER_BIN"
+    echo "Please run with --build flag first."
     exit 1
 fi
 
-if [ "$1" == "--build" ]; then
-    echo "[2/3] Compiling C++ source code..."
-    cd /home/alex/kvm_engine || exit 1
-    g++ -O3 -mcpu=cortex-a72 -mtune=cortex-a72 -flto -Wall -Wextra \
-        src/main.cpp src/CaptureDevice.cpp src/EncoderDevice.cpp -o kvm_engine
-    echo "Compilation successful."
-else
-    echo "[2/3] Skipping compilation (use --build to compile)."
-fi
+# Start HID Server in background
+# Writing to /dev/hidg* requires root privileges
+sudo "$HID_SERVER_BIN" &
+HID_PID=$!
 
-echo "[3/3] Starting MediaMTX server..."
-cd /home/alex/mediamtx || exit 1
+# Trap to kill HID server on exit
+trap "echo 'Shutting down HID server (PID: $HID_PID)...'; sudo kill $HID_PID; exit" SIGINT SIGTERM
+
+# Start MediaMTX (which starts kvm_engine and ffmpeg via runOnInit)
+cd "$MEDIAMTX_DIR"
 ./mediamtx
