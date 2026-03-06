@@ -15,7 +15,6 @@ fi
 if [ "$1" == "--build" ]; then
     echo "[2/3] Compiling C++ source code..."
     cd /home/alex/kvm_engine || exit 1
-    # Зверніть увагу: тепер компілюємо з папки src/
     g++ -O3 -mcpu=cortex-a72 -mtune=cortex-a72 -flto -Wall -Wextra \
         src/main.cpp src/CaptureDevice.cpp src/EncoderDevice.cpp -o kvm_engine
     echo "Compilation successful."
