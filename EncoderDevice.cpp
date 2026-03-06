@@ -319,3 +319,17 @@ void* EncoderDevice::getCaptureBufferPointer(int index) const {
 }
 
 int EncoderDevice::getFd() const { return fd; }
+
+bool EncoderDevice::initialize(uint32_t width, uint32_t height, uint32_t fps, uint32_t count) {
+    if (!openDevice()) return false;
+    if (!configureFormats(width, height)) return false;
+    
+    configureFrameRate(fps); // Warning only, non-fatal in original code
+    setupH264Controls();     // Warning only, non-fatal
+    
+    if (!requestBuffers(count)) return false;
+    if (!mapCaptureBuffers(count)) return false;
+    if (!startStreaming()) return false;
+    
+    return true;
+}

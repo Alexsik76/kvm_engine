@@ -1,57 +1,31 @@
 #include "CaptureDevice.hpp"
 #include "EncoderDevice.hpp"
-#include <linux/videodev2.h>
-#include <sys/time.h>
+#include "Config.hpp"
 #include <iostream>
 #include <poll.h>
-#include <chrono>
 #include <cstdio>
-#include "Config.hpp"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// KVM Engine — streams raw H.264 over TCP with minimum latency.
-//
-// VLC client command (on Windows host):
-//   vlc tcp://pi4.lan:8080 :demux=h264 :network-caching=0 :clock-jitter=0
-//        :clock-synchro=0
-//
-// Why raw H.264 (no container):
-//   MPEG-TS adds framing overhead and extra buffering. For KVM use, we
-//   prioritise frame delivery speed over perfect clock synchronisation.
-//   VLC in :clock-synchro=0 mode does not need a container PCR.
-// ─────────────────────────────────────────────────────────────────────────────
+#include <unistd.h>
 
 int main() {
-    // ── Capture device ──────────────────────────────────────────────────────
+    // ── 1. Initialize Capture Device ────────────────────────────────────────
     CaptureDevice capture(Config::videoNode, Config::width, Config::height, Config::format);
 
-    if (!capture.openDevice())                 return 1;
-    if (!capture.configureFormat())            return 1;
-    if (!capture.requestBuffers(Config::bufCount))     return 1;
-    if (!capture.mapAndQueueBuffers(Config::bufCount)) return 1;
-    if (!capture.startStreaming())             return 1;
-
+    if (!capture.initialize(Config::bufCount)) {
+        std::cerr << "Fatal error: Failed to initialize capture device." << std::endl;
+        return 1;
+    }
     std::cerr << "Capture initialised." << std::endl;
 
-    // ── Encoder device ──────────────────────────────────────────────────────
+    // ── 2. Initialize Encoder Device ────────────────────────────────────────
     EncoderDevice encoder(Config::encoderNode);
 
-    if (!encoder.openDevice())                    return 1;
-    if (!encoder.configureFormats(Config::width, Config::height)) return 1;
-    encoder.configureFrameRate(Config::fps);              // must be before setupH264Controls()
-    encoder.setupH264Controls();
-    if (!encoder.requestBuffers(Config::bufCount))        return 1;
-    if (!encoder.mapCaptureBuffers(Config::bufCount))     return 1;
-    if (!capture.exportBuffers())                 return 1;
-
-    if (!encoder.startStreaming()) return 1;
-
+    if (!encoder.initialize(Config::width, Config::height, Config::fps, Config::bufCount)) {
+        std::cerr << "Fatal error: Failed to initialize encoder device." << std::endl;
+        return 1;
+    }
     std::cerr << "Streaming raw H.264 to stdout... Press Ctrl+C to stop." << std::endl;
 
-    // ── Main loop ───────────────────────────────────────────────────────────
-    // poll() on both fds simultaneously — zero CPU waste when idle.
-    //   fds[0] = capture fd  — POLLIN: a raw frame is ready to dequeue
-    //   fds[1] = encoder fd  — POLLIN: an encoded frame is ready
+    // ── 3. Main Streaming Loop ──────────────────────────────────────────────
     struct pollfd fds[2];
     fds[0].fd     = capture.getFd();
     fds[0].events = POLLIN;
@@ -65,9 +39,7 @@ int main() {
             break;
         }
 
-        // 1. Raw frame ready → queue to encoder
-        //    We propagate the V4L2 buffer timestamp so the encoder driver
-        //    copies it to the CAPTURE buffer.
+        // A. Raw frame ready -> queue to encoder via DMA-BUF
         if (fds[0].revents & POLLIN) {
             uint32_t       bytes_used = 0;
             struct timeval cap_ts     = {};
@@ -78,7 +50,7 @@ int main() {
             }
         }
 
-        // 2. Recycle the encoder OUTPUT buffer slot back to capture
+        // B. Recycle the encoder OUTPUT buffer slot back to capture
         {
             int enc_out_idx = encoder.dequeueOutputBuffer();
             if (enc_out_idx != -1) {
@@ -86,7 +58,7 @@ int main() {
             }
         }
 
-        // 3. Encoded H.264 frame ready → send raw bytes to client
+        // C. Encoded H.264 frame ready -> send raw bytes to stdout
         if (fds[1].revents & POLLIN) {
             uint32_t       h264_bytes = 0;
             struct timeval enc_ts     = {};

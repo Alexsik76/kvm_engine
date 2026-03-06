@@ -167,3 +167,13 @@ int CaptureDevice::getExportFd(size_t index) const {
 }
 
 int CaptureDevice::getFd() const { return fd; }
+
+bool CaptureDevice::initialize(uint32_t count) {
+    if (!openDevice())                 return false;
+    if (!configureFormat())            return false;
+    if (!requestBuffers(count))        return false;
+    if (!mapAndQueueBuffers(count))    return false;
+    if (!exportBuffers())              return false;
+    if (!startStreaming())             return false;
+    return true;
+}
