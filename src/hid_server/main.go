@@ -17,28 +17,24 @@ const (
 	MouseDevice    = "/dev/hidg1"
 )
 
-// Upgrader for WebSocket connections
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for the KVM internal tool
+		return true
 	},
 }
 
-// KeyboardEvent represents a standard HID keyboard report structure
 type KeyboardEvent struct {
-	Modifiers byte   `json:"modifiers"` // Shift, Ctrl, Alt, etc.
-	Keys      []byte `json:"keys"`      // Up to 6 keycodes
+	Modifiers byte   `json:"modifiers"`
+	Keys      []byte `json:"keys"` // У Go []byte автоматично парситься з Base64-рядка в JSON
 }
 
-// MouseEvent represents a standard HID mouse report structure
 type MouseEvent struct {
-	Buttons byte `json:"buttons"` // Left, Right, Middle clicks
-	X       int8 `json:"x"`       // Relative X movement (-127 to 127)
-	Y       int8 `json:"y"`       // Relative Y movement (-127 to 127)
-	Wheel   int8 `json:"wheel"`   // Vertical scroll
+	Buttons byte `json:"buttons"`
+	X       int8 `json:"x"`
+	Y       int8 `json:"y"`
+	Wheel   int8 `json:"wheel"`
 }
 
-// HIDManager handles low-level writes to device files
 type HIDManager struct {
 	kbMu    sync.Mutex
 	mouseMu sync.Mutex
@@ -46,7 +42,6 @@ type HIDManager struct {
 	mFile   *os.File
 }
 
-// NewHIDManager opens device files for writing
 func NewHIDManager() (*HIDManager, error) {
 	kb, err := os.OpenFile(KeyboardDevice, os.O_WRONLY, 0666)
 	if err != nil {
@@ -65,13 +60,10 @@ func NewHIDManager() (*HIDManager, error) {
 	}, nil
 }
 
-// SendKeyReport writes an 8-byte keyboard report
 func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 	h.kbMu.Lock()
 	defer h.kbMu.Unlock()
 
-	// HID Keyboard report: 8 bytes
-	// 0: modifiers, 1: reserved, 2-7: keycodes
 	report := make([]byte, 8)
 	report[0] = event.Modifiers
 	for i := 0; i < len(event.Keys) && i < 6; i++ {
@@ -79,19 +71,22 @@ func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 	}
 
 	_, err := h.kbFile.Write(report)
+	if err != nil {
+		log.Printf("Keyboard write error: %v", err)
+	}
 	return err
 }
 
-// SendMouseReport writes a 4-byte mouse report
 func (h *HIDManager) SendMouseReport(event MouseEvent) error {
 	h.mouseMu.Lock()
 	defer h.mouseMu.Unlock()
 
-	// HID Mouse report: 4 bytes
-	// 0: buttons, 1: x, 2: y, 3: wheel
 	report := []byte{event.Buttons, byte(event.X), byte(event.Y), byte(event.Wheel)}
 
 	_, err := h.mFile.Write(report)
+	if err != nil {
+		log.Printf("Mouse write error: %v", err)
+	}
 	return err
 }
 
@@ -100,7 +95,6 @@ func (h *HIDManager) Close() {
 	h.mFile.Close()
 }
 
-// WSHandler manages WebSocket communication
 type WSHandler struct {
 	hid *HIDManager
 }
@@ -113,39 +107,63 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	log.Println("New control session established")
+	log.Println("New control session established from", r.RemoteAddr)
 
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("Read error: %v", err)
+			log.Printf("Read error (Connection closed?): %v", err)
 			break
 		}
 
-		// Generic message to determine type
+		// ДІАГНОСТИКА: Виводимо сирий JSON, який прийшов з браузера
+		log.Printf("[RAW SIGNAL] %s", string(message))
+
 		var generic map[string]interface{}
 		if err := json.Unmarshal(message, &generic); err != nil {
+			log.Printf("JSON Parse error: %v", err)
 			continue
 		}
 
 		msgType, ok := generic["type"].(string)
 		if !ok {
+			log.Printf("Error: 'type' field is missing or not a string")
+			continue
+		}
+
+		dataObj, ok := generic["data"]
+		if !ok {
+			log.Printf("Error: 'data' field is missing")
+			continue
+		}
+
+		// Перепаковуємо dataObj в потрібну структуру
+		dataBytes, err := json.Marshal(dataObj)
+		if err != nil {
+			log.Printf("Error re-marshaling the 'data' object: %v", err)
 			continue
 		}
 
 		switch msgType {
 		case "keyboard":
 			var kb KeyboardEvent
-			if data, err := json.Marshal(generic["data"]); err == nil {
-				json.Unmarshal(data, &kb)
+			if err := json.Unmarshal(dataBytes, &kb); err != nil {
+				log.Printf("Failed to map JSON to KeyboardEvent struct: %v \n Payload was: %s", err, string(dataBytes))
+			} else {
+				log.Printf("Valid KeyboardEvent parsed: %+v", kb)
 				w.hid.SendKeyReport(kb)
 			}
 		case "mouse":
 			var m MouseEvent
-			if data, err := json.Marshal(generic["data"]); err == nil {
-				json.Unmarshal(data, &m)
+			if err := json.Unmarshal(dataBytes, &m); err != nil {
+				log.Printf("Failed to map JSON to MouseEvent struct: %v \n Payload was: %s", err, string(dataBytes))
+			} else {
+				// Щоб не заспамити консоль при рухах миші, вимкніть це логування після тесту, або залишіть для дебагу
+				log.Printf("Valid MouseEvent parsed: %+v", m)
 				w.hid.SendMouseReport(m)
 			}
+		default:
+			log.Printf("Unknown message type received: %s", msgType)
 		}
 	}
 }
