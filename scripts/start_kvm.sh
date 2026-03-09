@@ -53,9 +53,15 @@ fi
 sudo "$HID_SERVER_BIN" &
 HID_PID=$!
 
-# Trap to kill HID server on exit
-trap 'echo "Shutting down HID server..."; sudo kill $HID_PID 2>/dev/null' EXIT INT TERM
+# Cleanup function to prevent double execution
+cleanup() {
+    echo "Shutting down HID server..."
+    sudo kill $HID_PID 2>/dev/null || true
+    trap - EXIT INT TERM
+}
 
-# Start MediaMTX (which starts kvm_engine and ffmpeg via runOnInit)
+trap cleanup EXIT INT TERM
+
+# Start MediaMTX
 cd "$MEDIAMTX_DIR"
 ./mediamtx
