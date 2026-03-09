@@ -65,6 +65,30 @@ func NewHIDManager() (*HIDManager, error) {
 	}, nil
 }
 
+func (h *HIDManager) reopenKeyboard() error {
+	if h.kbFile != nil {
+		h.kbFile.Close()
+	}
+	kb, err := os.OpenFile(KeyboardDevice, os.O_WRONLY, 0666)
+	if err != nil {
+		return err
+	}
+	h.kbFile = kb
+	return nil
+}
+
+func (h *HIDManager) reopenMouse() error {
+	if h.mFile != nil {
+		h.mFile.Close()
+	}
+	m, err := os.OpenFile(MouseDevice, os.O_WRONLY, 0666)
+	if err != nil {
+		return err
+	}
+	h.mFile = m
+	return nil
+}
+
 func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 	h.kbMu.Lock()
 	defer h.kbMu.Unlock()
@@ -83,7 +107,17 @@ func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 
 	_, err := h.kbFile.Write(report)
 	if err != nil {
-		log.Printf("Keyboard write error: %v", err)
+		log.Printf("Keyboard write error: %v. Attempting to reopen device...", err)
+		if reopenErr := h.reopenKeyboard(); reopenErr == nil {
+			_, err = h.kbFile.Write(report)
+			if err != nil {
+				log.Printf("Keyboard write retry failed: %v", err)
+			} else {
+				log.Println("Successfully reopened keyboard device and sent report.")
+			}
+		} else {
+			log.Printf("Failed to reopen keyboard device: %v", reopenErr)
+		}
 	}
 	return err
 }
@@ -98,7 +132,17 @@ func (h *HIDManager) SendMouseReport(event MouseEvent) error {
 
 	_, err := h.mFile.Write(report)
 	if err != nil {
-		log.Printf("Mouse write error: %v", err)
+		log.Printf("Mouse write error: %v. Attempting to reopen device...", err)
+		if reopenErr := h.reopenMouse(); reopenErr == nil {
+			_, err = h.mFile.Write(report)
+			if err != nil {
+				log.Printf("Mouse write retry failed: %v", err)
+			} else {
+				log.Println("Successfully reopened mouse device and sent report.")
+			}
+		} else {
+			log.Printf("Failed to reopen mouse device: %v", reopenErr)
+		}
 	}
 	return err
 }
