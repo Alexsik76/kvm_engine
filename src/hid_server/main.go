@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,10 +14,6 @@ import (
 const (
 	KeyboardDevice = "/dev/hidg0"
 	MouseDevice    = "/dev/hidg1"
-	
-	// KeepAlive interval
-	PingInterval = 30 * time.Second
-	PongWait     = 60 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
@@ -48,12 +43,13 @@ type HIDManager struct {
 }
 
 func NewHIDManager() (*HIDManager, error) {
-	kb, err := os.OpenFile(KeyboardDevice, os.O_WRONLY, 0666)
+	// 02000 is O_NONBLOCK on Linux
+	kb, err := os.OpenFile(KeyboardDevice, os.O_WRONLY|02000, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open keyboard: %v", err)
 	}
 
-	m, err := os.OpenFile(MouseDevice, os.O_WRONLY, 0666)
+	m, err := os.OpenFile(MouseDevice, os.O_WRONLY|02000, 0666)
 	if err != nil {
 		kb.Close()
 		return nil, fmt.Errorf("failed to open mouse: %v", err)
@@ -65,59 +61,20 @@ func NewHIDManager() (*HIDManager, error) {
 	}, nil
 }
 
-func (h *HIDManager) reopenKeyboard() error {
-	if h.kbFile != nil {
-		h.kbFile.Close()
-	}
-	kb, err := os.OpenFile(KeyboardDevice, os.O_WRONLY, 0666)
-	if err != nil {
-		return err
-	}
-	h.kbFile = kb
-	return nil
-}
-
-func (h *HIDManager) reopenMouse() error {
-	if h.mFile != nil {
-		h.mFile.Close()
-	}
-	m, err := os.OpenFile(MouseDevice, os.O_WRONLY, 0666)
-	if err != nil {
-		return err
-	}
-	h.mFile = m
-	return nil
-}
-
 func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 	h.kbMu.Lock()
 	defer h.kbMu.Unlock()
 
-	// Keyboard report must always be exactly 8 bytes long for standard boot protocol
 	report := make([]byte, 8)
 	report[0] = event.Modifiers
-	// Byte 1 is reserved (usually 0)
 	
-	// Bytes 2-7 are the pressed keycodes (up to 6)
-	// Because frontend sends Base64 which Unmarshals to event.Keys natively, 
-	// event.Keys is already the raw bytes (e.g., [4] for 'A')
 	for i := 0; i < len(event.Keys) && i < 6; i++ {
 		report[i+2] = event.Keys[i]
 	}
 
 	_, err := h.kbFile.Write(report)
 	if err != nil {
-		log.Printf("Keyboard write error: %v. Attempting to reopen device...", err)
-		if reopenErr := h.reopenKeyboard(); reopenErr == nil {
-			_, err = h.kbFile.Write(report)
-			if err != nil {
-				log.Printf("Keyboard write retry failed: %v", err)
-			} else {
-				log.Println("Successfully reopened keyboard device and sent report.")
-			}
-		} else {
-			log.Printf("Failed to reopen keyboard device: %v", reopenErr)
-		}
+		log.Printf("Keyboard write error: %v (Host PC may be sleeping, unplugged or ignoring USB)", err)
 	}
 	return err
 }
@@ -126,23 +83,11 @@ func (h *HIDManager) SendMouseReport(event MouseEvent) error {
 	h.mouseMu.Lock()
 	defer h.mouseMu.Unlock()
 
-	// Mouse report length can be 4 or 5 depending on descriptors. 
-	// Yours takes 4: Buttons, X, Y, Wheel.
 	report := []byte{event.Buttons, byte(event.X), byte(event.Y), byte(event.Wheel)}
 
 	_, err := h.mFile.Write(report)
 	if err != nil {
-		log.Printf("Mouse write error: %v. Attempting to reopen device...", err)
-		if reopenErr := h.reopenMouse(); reopenErr == nil {
-			_, err = h.mFile.Write(report)
-			if err != nil {
-				log.Printf("Mouse write retry failed: %v", err)
-			} else {
-				log.Println("Successfully reopened mouse device and sent report.")
-			}
-		} else {
-			log.Printf("Failed to reopen mouse device: %v", reopenErr)
-		}
+		log.Printf("Mouse write error: %v (Host PC may be sleeping, unplugged or ignoring USB)", err)
 	}
 	return err
 }
@@ -172,35 +117,8 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	
 	log.Println("New control session established from", r.RemoteAddr)
 
-	// Set up ping/pong handler so we detect dead connections when user switches tabs without closing
-	conn.SetReadDeadline(time.Now().Add(PongWait))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(PongWait))
-		return nil
-	})
-
-	// Start a goroutine to send periodic pings
-	doneCh := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(PingInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
-					log.Printf("Ping failed, closing connection: %v", err)
-					conn.Close()
-					return
-				}
-			case <-doneCh:
-				return
-			}
-		}
-	}()
-
 	// Cleanup on exit
 	defer func() {
-		close(doneCh)
 		conn.Close()
 		log.Println("Connection closed, clearing HID state for:", r.RemoteAddr)
 		// Crucial: Release all keys so they don't get stuck!
@@ -210,11 +128,7 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Unexpected read error: %v", err)
-			} else {
-				log.Printf("Connection disconnected normally: %v", err)
-			}
+			log.Printf("Read error or connection closed: %v", err)
 			break
 		}
 
