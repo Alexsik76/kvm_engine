@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -14,6 +15,10 @@ import (
 const (
 	KeyboardDevice = "/dev/hidg0"
 	MouseDevice    = "/dev/hidg1"
+	
+	// KeepAlive interval
+	PingInterval = 30 * time.Second
+	PongWait     = 60 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
@@ -24,6 +29,7 @@ var upgrader = websocket.Upgrader{
 
 type KeyboardEvent struct {
 	Modifiers byte   `json:"modifiers"`
+	// Go's encoding/json automatically decodes Base64 strings into []byte
 	Keys      []byte `json:"keys"`
 }
 
@@ -63,8 +69,14 @@ func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 	h.kbMu.Lock()
 	defer h.kbMu.Unlock()
 
+	// Keyboard report must always be exactly 8 bytes long for standard boot protocol
 	report := make([]byte, 8)
 	report[0] = event.Modifiers
+	// Byte 1 is reserved (usually 0)
+	
+	// Bytes 2-7 are the pressed keycodes (up to 6)
+	// Because frontend sends Base64 which Unmarshals to event.Keys natively, 
+	// event.Keys is already the raw bytes (e.g., [4] for 'A')
 	for i := 0; i < len(event.Keys) && i < 6; i++ {
 		report[i+2] = event.Keys[i]
 	}
@@ -80,6 +92,8 @@ func (h *HIDManager) SendMouseReport(event MouseEvent) error {
 	h.mouseMu.Lock()
 	defer h.mouseMu.Unlock()
 
+	// Mouse report length can be 4 or 5 depending on descriptors. 
+	// Yours takes 4: Buttons, X, Y, Wheel.
 	report := []byte{event.Buttons, byte(event.X), byte(event.Y), byte(event.Wheel)}
 
 	_, err := h.mFile.Write(report)
@@ -89,7 +103,14 @@ func (h *HIDManager) SendMouseReport(event MouseEvent) error {
 	return err
 }
 
+func (h *HIDManager) ClearAll() {
+	// Release all keys and mouse buttons just in case
+	h.SendKeyReport(KeyboardEvent{Modifiers: 0, Keys: []byte{}})
+	h.SendMouseReport(MouseEvent{Buttons: 0, X: 0, Y: 0, Wheel: 0})
+}
+
 func (h *HIDManager) Close() {
+	h.ClearAll()
 	h.kbFile.Close()
 	h.mFile.Close()
 }
@@ -104,14 +125,52 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		log.Printf("WS Upgrade error: %v", err)
 		return
 	}
-	defer conn.Close()
-
+	
 	log.Println("New control session established from", r.RemoteAddr)
+
+	// Set up ping/pong handler so we detect dead connections when user switches tabs without closing
+	conn.SetReadDeadline(time.Now().Add(PongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(PongWait))
+		return nil
+	})
+
+	// Start a goroutine to send periodic pings
+	doneCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(PingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
+					log.Printf("Ping failed, closing connection: %v", err)
+					conn.Close()
+					return
+				}
+			case <-doneCh:
+				return
+			}
+		}
+	}()
+
+	// Cleanup on exit
+	defer func() {
+		close(doneCh)
+		conn.Close()
+		log.Println("Connection closed, clearing HID state for:", r.RemoteAddr)
+		// Crucial: Release all keys so they don't get stuck!
+		w.hid.ClearAll()
+	}()
 
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("Read error (Connection closed?): %v", err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("Unexpected read error: %v", err)
+			} else {
+				log.Printf("Connection disconnected normally: %v", err)
+			}
 			break
 		}
 
@@ -133,6 +192,8 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Fast path if it's already a map
+		// But re-marshaling is safe too
 		dataBytes, err := json.Marshal(dataObj)
 		if err != nil {
 			log.Printf("Error re-marshaling the 'data' object: %v", err)
@@ -145,6 +206,7 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(dataBytes, &kb); err != nil {
 				log.Printf("Failed to map JSON to KeyboardEvent struct: %v", err)
 			} else {
+				// Don't log normal keypresses to avoid CPU spam
 				w.hid.SendKeyReport(kb)
 			}
 		case "mouse":
