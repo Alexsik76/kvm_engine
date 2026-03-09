@@ -1,27 +1,17 @@
 #!/bin/bash
-# Virtual USB Replug Script
-# Forces the host OS to wake up or reinitialize the USB port.
+# Virtual USB Wake Script
+# Forces the host OS to wake up by simulating a harmless keypress (Left Shift).
 
-CONFIGFS_HOME="/sys/kernel/config/usb_gadget"
-GADGET_NAME="kvm_gadget"
-GADGET_PATH="$CONFIGFS_HOME/$GADGET_NAME"
-
-if [ ! -d "$GADGET_PATH" ]; then
-    echo "Error: Gadget not found."
+if [ ! -w "/dev/hidg0" ]; then
+    echo "Error: /dev/hidg0 is not writable or does not exist."
     exit 1
 fi
 
-UDC_CONTROLLER=$(ls /sys/class/udc | head -n 1)
+echo "Sending wakeup keystroke (Left Shift)..."
+# Press Left Shift (Modifier byte 0x02, 0 keys pressed)
+printf "\x02\x00\x00\x00\x00\x00\x00\x00" > /dev/hidg0
+sleep 0.1
+# Release all keys
+printf "\x00\x00\x00\x00\x00\x00\x00\x00" > /dev/hidg0
 
-if [ -z "$UDC_CONTROLLER" ]; then
-    echo "Error: UDC controller not found."
-    exit 1
-fi
-
-echo "Simulating USB unplug..."
-echo "" > "$GADGET_PATH/UDC"
-sleep 1
-
-echo "Simulating USB plug..."
-echo "$UDC_CONTROLLER" > "$GADGET_PATH/UDC"
-echo "Virtual replug complete."
+echo "Wakeup signal sent."
