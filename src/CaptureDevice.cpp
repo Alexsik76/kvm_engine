@@ -4,6 +4,10 @@
 #include <sys/ioctl.h>
 #include <iostream>
 #include <sys/mman.h>
+#include <cerrno>
+#include <cstring>
+#include <stdexcept>
+#include <poll.h>
 
 CaptureDevice::CaptureDevice(const std::string& path, uint32_t w, uint32_t h, uint32_t format)
     : devicePath(path), fd(-1), width(w), height(h), pixelFormat(format) {}
@@ -116,7 +120,7 @@ int CaptureDevice::dequeueBuffer(uint32_t& bytes_used, struct timeval& timestamp
         return -1;
     }
     if (ret == 0) {
-        return -1;
+        return -1; 
     }
 
     struct v4l2_buffer buf = {};
@@ -124,7 +128,13 @@ int CaptureDevice::dequeueBuffer(uint32_t& bytes_used, struct timeval& timestamp
     buf.memory = V4L2_MEMORY_MMAP;
 
     if (ioctl(fd, VIDIOC_DQBUF, &buf) == -1) {
-        return -1;
+        if (errno == EAGAIN) {
+            return -1;
+        }
+        
+        std::string err_msg = "VIDIOC_DQBUF hardware failure: ";
+        err_msg += strerror(errno);
+        throw std::runtime_error(err_msg);
     }
 
     bytes_used = buf.bytesused;
@@ -132,6 +142,7 @@ int CaptureDevice::dequeueBuffer(uint32_t& bytes_used, struct timeval& timestamp
     return buf.index;
 }
 
+// Повернуто необхідний метод queueBuffer
 bool CaptureDevice::queueBuffer(int index) {
     struct v4l2_buffer buf = {};
     buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;

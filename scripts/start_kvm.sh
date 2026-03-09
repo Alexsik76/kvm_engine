@@ -14,7 +14,7 @@ echo "=== IP-KVM Integrated System Startup ==="
 
 # 1. Hardware Video Init
 echo "[1/4] Initializing Video Bridge (TC358743)..."
-sudo "$PROJECT_ROOT/scripts/init_kvm.sh"
+sudo "$PROJECT_ROOT/scripts/init_kvm.sh" || echo "Warning: Video init returned non-zero. Proceeding..."
 
 # 2. USB Gadget Init
 echo "[2/4] Initializing USB HID Gadget..."
