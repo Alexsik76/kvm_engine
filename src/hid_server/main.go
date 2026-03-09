@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// HID Devices paths
 const (
 	KeyboardDevice = "/dev/hidg0"
 	MouseDevice    = "/dev/hidg1"
@@ -25,7 +24,7 @@ var upgrader = websocket.Upgrader{
 
 type KeyboardEvent struct {
 	Modifiers byte   `json:"modifiers"`
-	Keys      []byte `json:"keys"` // У Go []byte автоматично парситься з Base64-рядка в JSON
+	Keys      []byte `json:"keys"`
 }
 
 type MouseEvent struct {
@@ -116,9 +115,6 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// ДІАГНОСТИКА: Виводимо сирий JSON, який прийшов з браузера
-		log.Printf("[RAW SIGNAL] %s", string(message))
-
 		var generic map[string]interface{}
 		if err := json.Unmarshal(message, &generic); err != nil {
 			log.Printf("JSON Parse error: %v", err)
@@ -137,7 +133,6 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Перепаковуємо dataObj в потрібну структуру
 		dataBytes, err := json.Marshal(dataObj)
 		if err != nil {
 			log.Printf("Error re-marshaling the 'data' object: %v", err)
@@ -148,18 +143,15 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		case "keyboard":
 			var kb KeyboardEvent
 			if err := json.Unmarshal(dataBytes, &kb); err != nil {
-				log.Printf("Failed to map JSON to KeyboardEvent struct: %v \n Payload was: %s", err, string(dataBytes))
+				log.Printf("Failed to map JSON to KeyboardEvent struct: %v", err)
 			} else {
-				log.Printf("Valid KeyboardEvent parsed: %+v", kb)
 				w.hid.SendKeyReport(kb)
 			}
 		case "mouse":
 			var m MouseEvent
 			if err := json.Unmarshal(dataBytes, &m); err != nil {
-				log.Printf("Failed to map JSON to MouseEvent struct: %v \n Payload was: %s", err, string(dataBytes))
+				log.Printf("Failed to map JSON to MouseEvent struct: %v", err)
 			} else {
-				// Щоб не заспамити консоль при рухах миші, вимкніть це логування після тесту, або залишіть для дебагу
-				log.Printf("Valid MouseEvent parsed: %+v", m)
 				w.hid.SendMouseReport(m)
 			}
 		default:
