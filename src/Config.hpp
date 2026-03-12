@@ -49,7 +49,7 @@ namespace Config {
     public:
         static ConfigData load(const std::string& path = "/home/alex/kvm_engine/config/config.json");
         
-    private:
+    public:
         static uint32_t parseFormat(const std::string& fmt);
         static uint32_t parseProfile(const std::string& profile);
         static uint32_t parseLevel(const std::string& level);
