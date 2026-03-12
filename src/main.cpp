@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <csignal>
 #include <atomic>
+#include <filesystem>
 
 std::atomic<bool> keepRunning(true);
 
@@ -19,15 +20,31 @@ int main() {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    CaptureDevice capture(Config::videoNode, Config::width, Config::height, Config::format);
-    if (!capture.initialize(Config::bufCount)) {
+    // Get executable directory for config path
+    std::filesystem::path exePath = std::filesystem::read_symlink("/proc/self/exe").parent_path();
+    std::string configPath = (exePath / "config" / "config.json").string();
+    
+    // Also check current directory as fallback
+    if (!std::filesystem::exists(configPath)) {
+        configPath = "./config/config.json";
+    }
+
+    try {
+        Config::Loader::load(configPath);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to load config: " << e.what() << std::endl;
+        return 1;
+    }
+
+    CaptureDevice capture(Config::data.video.device, Config::data.video.width, Config::data.video.height, Config::data.video.getV4L2Format());
+    if (!capture.initialize(Config::data.buffers.count)) {
         std::cerr << "Fatal error: Failed to initialize capture device." << std::endl;
         return 1;
     }
     std::cerr << "Capture initialised." << std::endl;
 
-    EncoderDevice encoder(Config::encoderNode);
-    if (!encoder.initialize(Config::width, Config::height, Config::fps, Config::bufCount)) {
+    EncoderDevice encoder(Config::data.encoder.device);
+    if (!encoder.initialize(Config::data.video.width, Config::data.video.height, Config::data.video.fps, Config::data.buffers.count)) {
         std::cerr << "Fatal error: Failed to initialize encoder device." << std::endl;
         return 1;
     }

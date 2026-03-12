@@ -120,7 +120,7 @@ int CaptureDevice::dequeueBuffer(uint32_t& bytes_used, struct timeval& timestamp
         return -1;
     }
     if (ret == 0) {
-        return -1; 
+        return -1;
     }
 
     struct v4l2_buffer buf = {};

@@ -6,15 +6,50 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/gorilla/websocket"
 )
 
-const (
-	KeyboardDevice = "/dev/hidg0"
-	MouseDevice    = "/dev/hidg1"
-)
+type Config struct {
+	Server struct {
+		Port           uint16 `json:"port"`
+		KeyboardDevice string `json:"keyboard_device"`
+		MouseDevice    string `json:"mouse_device"`
+	} `json:"server"`
+}
+
+var config Config
+
+func getConfigPath() string {
+	// Check environment variable first
+	if envPath := os.Getenv("KVM_CONFIG"); envPath != "" {
+		return envPath
+	}
+
+	// Try executable directory first
+	if exePath, err := os.Executable(); err == nil {
+		configPath := filepath.Join(filepath.Dir(exePath), "config", "config.json")
+		if _, err := os.Stat(configPath); err == nil {
+			return configPath
+		}
+	}
+
+	// Fallback to current working directory
+	return "./config/config.json"
+}
+
+func loadConfig(path string) error {
+	if path == "" {
+		path = getConfigPath()
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &config)
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -23,9 +58,9 @@ var upgrader = websocket.Upgrader{
 }
 
 type KeyboardEvent struct {
-	Modifiers byte   `json:"modifiers"`
+	Modifiers byte `json:"modifiers"`
 	// Go's encoding/json automatically decodes Base64 strings into []byte
-	Keys      []byte `json:"keys"`
+	Keys []byte `json:"keys"`
 }
 
 type MouseEvent struct {
@@ -43,13 +78,12 @@ type HIDManager struct {
 }
 
 func NewHIDManager() (*HIDManager, error) {
-	// 02000 is O_NONBLOCK on Linux
-	kb, err := os.OpenFile(KeyboardDevice, os.O_WRONLY|02000, 0666)
+	kb, err := os.OpenFile(config.Server.KeyboardDevice, os.O_WRONLY|02000, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open keyboard: %v", err)
 	}
 
-	m, err := os.OpenFile(MouseDevice, os.O_WRONLY|02000, 0666)
+	m, err := os.OpenFile(config.Server.MouseDevice, os.O_WRONLY|02000, 0666)
 	if err != nil {
 		kb.Close()
 		return nil, fmt.Errorf("failed to open mouse: %v", err)
@@ -67,7 +101,7 @@ func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 
 	report := make([]byte, 8)
 	report[0] = event.Modifiers
-	
+
 	for i := 0; i < len(event.Keys) && i < 6; i++ {
 		report[i+2] = event.Keys[i]
 	}
@@ -114,7 +148,7 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		log.Printf("WS Upgrade error: %v", err)
 		return
 	}
-	
+
 	log.Println("New control session established from", r.RemoteAddr)
 
 	// Cleanup on exit
@@ -181,6 +215,10 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if err := loadConfig(""); err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
 	hid, err := NewHIDManager()
 	if err != nil {
 		log.Fatalf("Critical HID failure: %v", err)
@@ -191,7 +229,7 @@ func main() {
 
 	http.Handle("/ws/control", handler)
 
-	port := ":8080"
+	port := fmt.Sprintf(":%d", config.Server.Port)
 	log.Printf("HID Server started on %s", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
 		log.Fatal(err)

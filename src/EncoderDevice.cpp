@@ -1,4 +1,5 @@
 #include "EncoderDevice.hpp"
+#include "Config.hpp"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -100,34 +101,25 @@ bool EncoderDevice::configureFrameRate(uint32_t fps) {
 }
 
 bool EncoderDevice::setupH264Controls() {
-    // ── KVM-optimised H.264 controls — latency over quality ──────────────
-    // Key insight: periodic latency spikes are caused by large IDR frames
-    // creating a TCP burst. Reducing GOP and capping CPB size keeps frame
-    // sizes uniform, which prevents VLC's 5-frame catch-up drops.
     struct v4l2_ext_control ctrls[6] = {};
 
-    // CBR: mandatory for predictable frame sizes and TCP pacing over internet
     ctrls[0].id    = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
     ctrls[0].value = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
 
     ctrls[1].id    = V4L2_CID_MPEG_VIDEO_BITRATE;
-    ctrls[1].value = 2000000; // 2 Mbps — stable for LAN and low-upload internet
+    ctrls[1].value = Config::data.encoder.bitrate;
 
-    // Send SPS/PPS with every IDR so decoder can sync immediately
     ctrls[2].id    = V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER;
     ctrls[2].value = 1;
 
-    // GOP = 30 frames (500ms at 60fps)
     ctrls[3].id    = V4L2_CID_MPEG_VIDEO_H264_I_PERIOD;
-    ctrls[3].value = 30;
+    ctrls[3].value = Config::data.encoder.gop;
 
-    // Baseline profile: no B-frames, no reorder delay
     ctrls[4].id    = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
-    ctrls[4].value = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
+    ctrls[4].value = Config::Loader::parseProfile(Config::data.encoder.profile);
 
-    // Level 4.0: supports 720p@60fps
     ctrls[5].id    = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
-    ctrls[5].value = V4L2_MPEG_VIDEO_H264_LEVEL_4_0;
+    ctrls[5].value = Config::Loader::parseLevel(Config::data.encoder.level);
 
     struct v4l2_ext_controls ext_ctrls = {};
     ext_ctrls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
@@ -140,7 +132,9 @@ bool EncoderDevice::setupH264Controls() {
         std::cout << "H.264 controls applied:"
                   << " CBR " << (ctrls[1].value / 1000000) << " Mbps"
                   << ", GOP " << ctrls[3].value
-                  << ", Profile Baseline, Level 4.0, SPS/PPS repeated." << std::endl;
+                  << ", Profile " << Config::data.encoder.profile
+                  << ", Level " << Config::data.encoder.level
+                  << ", SPS/PPS repeated." << std::endl;
     }
     return true;
 }
