@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -106,11 +108,25 @@ func (h *HIDManager) SendKeyReport(event KeyboardEvent) error {
 		report[i+2] = event.Keys[i]
 	}
 
-	_, err := h.kbFile.Write(report)
-	if err != nil {
-		log.Printf("Keyboard write error: %v (Host PC may be sleeping, unplugged or ignoring USB)", err)
+	const maxRetries = 3
+	for i := 0; i < maxRetries; i++ {
+		_, err := h.kbFile.Write(report)
+		if err == nil {
+			return nil
+		}
+
+		// EAGAIN means host is busy/not reading. Retry for keyboard reliability.
+		if strings.Contains(err.Error(), "resource temporarily unavailable") || strings.Contains(err.Error(), "EAGAIN") {
+			if i < maxRetries-1 {
+				time.Sleep(time.Duration(10*(i+1)) * time.Millisecond)
+				continue
+			}
+		}
+
+		log.Printf("Keyboard write fatal error (after %d retries): %v", i+1, err)
+		return err
 	}
-	return err
+	return nil
 }
 
 func (h *HIDManager) SendMouseReport(event MouseEvent) error {
@@ -121,7 +137,11 @@ func (h *HIDManager) SendMouseReport(event MouseEvent) error {
 
 	_, err := h.mFile.Write(report)
 	if err != nil {
-		log.Printf("Mouse write error: %v (Host PC may be sleeping, unplugged or ignoring USB)", err)
+		// Mouse is fire-and-forget. Ignore EAGAIN to prevent blocking or network spam.
+		if strings.Contains(err.Error(), "resource temporarily unavailable") || strings.Contains(err.Error(), "EAGAIN") {
+			return nil
+		}
+		log.Printf("Mouse write error: %v", err)
 	}
 	return err
 }
@@ -198,8 +218,10 @@ func (w *WSHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(dataBytes, &kb); err != nil {
 				log.Printf("Failed to map JSON to KeyboardEvent struct: %v", err)
 			} else {
-				// Don't log normal keypresses to avoid CPU spam
-				w.hid.SendKeyReport(kb)
+				// If keyboard write fails after retries, send NACK to frontend
+				if err := w.hid.SendKeyReport(kb); err != nil {
+					conn.WriteJSON(map[string]string{"type": "reset_hid"})
+				}
 			}
 		case "mouse":
 			var m MouseEvent
