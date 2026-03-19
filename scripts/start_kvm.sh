@@ -28,26 +28,14 @@ if [ "$1" == "--build" ]; then
     JSON_INCLUDE="$PROJECT_ROOT/include/nlohmann"
     if [ ! -d "$JSON_INCLUDE" ]; then
         echo "Downloading nlohmann/json..."
-        mkdir -p "$PROJECT_ROOT/include"
-        wget https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.gz -O /tmp/json.tar.gz
-        if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to download nlohmann/json"
-            exit 1
-        fi
-        tar -xzf /tmp/json.tar.gz -C "$PROJECT_ROOT/include"
-        if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to extract nlohmann/json"
-            rm -f /tmp/json.tar.gz
-            exit 1
-        fi
-        mv "$PROJECT_ROOT/include/include" "$JSON_INCLUDE"
-        rm -f /tmp/json.tar.gz
+        mkdir -p "$JSON_INCLUDE"
+        wget -q --show-progress https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp -O "$JSON_INCLUDE/json.hpp"
     fi
     
     # Build C++ Video Engine
     cd "$PROJECT_ROOT"
-    g++ -O3 -mcpu=cortex-a72 -mtune=cortex-a72 -flto -Wall -Wextra \
-        -I"$JSON_INCLUDE" \
+    g++ -O3 -mcpu=cortex-a72 -mtune=cortex-a72 -flto=auto -Wall -Wextra \
+        -I"$PROJECT_ROOT/include" \
         src/main.cpp src/CaptureDevice.cpp src/EncoderDevice.cpp src/Config.cpp -o kvm_engine
     
     # Build Go HID Server (Explicit output path to project root)
