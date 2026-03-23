@@ -1,22 +1,34 @@
 #!/bin/bash
 # IP-KVM Hardware Initialization Script
 
-echo "Configuring TC358743 for 720p60 UYVY..."
+# Кольори для логів
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+DATE_FMT=$(date "+%Y/%m/%d %H:%M:%S")
 
-# Navigate to the working directory to ensure the EDID file is found
+echo -e "${DATE_FMT} INF Configuring TC358743 for 720p60 UYVY..."
+
 cd /home/alex/TC358743-Driver || exit 1
+EDID_FILE="force_720p.edid" 
 
-# 1. Load the 720p EDID profile
-v4l2-ctl -d /dev/video0 --set-edid=file=720p60edid
+v4l2-ctl -d /dev/video0 --set-edid pad=0,file=${EDID_FILE},format=raw
 
-# Wait for the source PC to negotiate the new virtual monitor
-sleep 2
+echo -e "${DATE_FMT} INF Waiting for stable video signal..."
+while true; do
+    CURRENT_W=$(v4l2-ctl -d /dev/video0 --query-dv-timings | awk '/Active width/ {print $3}' || echo 0)
+    
+    if [ "${CURRENT_W:-0}" -gt 0 ]; then
+        break
+    fi
+    sleep 1
+done
 
-# 2. Apply detected timings
 v4l2-ctl -d /dev/video0 --set-dv-bt-timings query || true
 
-# 3. Set the pixel format and resolution for the capture pipeline
-v4l2-ctl -d /dev/video0 --set-fmt-video=width=1280,height=720,pixelformat=UYVY
+WIDTH=$(v4l2-ctl -d /dev/video0 --query-dv-timings | awk '/Active width/ {print $3}')
+HEIGHT=$(v4l2-ctl -d /dev/video0 --query-dv-timings | awk '/Active height/ {print $3}')
+v4l2-ctl -d /dev/video0 --set-fmt-video=width=${WIDTH:-1280},height=${HEIGHT:-720},pixelformat=UYVY
 
-echo "Hardware configuration complete. Current status:"
-v4l2-ctl -d /dev/video0 --query-dv-timings || true
+# Вивід у стилі MediaMTX з зеленим INF
+DATE_FMT=$(date "+%Y/%m/%d %H:%M:%S")
+echo -e "${DATE_FMT} ${GREEN}INF Hardware configuration complete. Current status: ${WIDTH}x${HEIGHT}${NC}"

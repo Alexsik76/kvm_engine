@@ -8,7 +8,7 @@
     },
     "encoder": {
         "device": "/dev/video11",
-        "bitrate": 2000000,
+        "bitrate": 4000000,
         "gop": 30,
         "profile": "baseline",
         "level": "4.0"

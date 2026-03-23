@@ -44,7 +44,7 @@ int main() {
     std::cerr << "Capture initialised." << std::endl;
 
     EncoderDevice encoder(Config::data.encoder.device);
-    if (!encoder.initialize(Config::data.video.width, Config::data.video.height, Config::data.video.fps, Config::data.buffers.count)) {
+    if (!encoder.initialize(capture.getWidth(), capture.getHeight(), Config::data.video.fps, Config::data.buffers.count)) {
         std::cerr << "Fatal error: Failed to initialize encoder device." << std::endl;
         return 1;
     }

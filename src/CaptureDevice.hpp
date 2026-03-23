@@ -40,6 +40,9 @@ public:
     CaptureDevice(const std::string& path, uint32_t w, uint32_t h, uint32_t format);
     ~CaptureDevice();
 
+    uint32_t getWidth() const { return width; }
+    uint32_t getHeight() const { return height; }
+
     // Single public method for complete setup
     bool initialize(uint32_t count);
 

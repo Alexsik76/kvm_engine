@@ -33,6 +33,17 @@ bool CaptureDevice::openDevice() {
 }
 
 bool CaptureDevice::configureFormat() {
+    // Query active timings from the hardware
+    struct v4l2_dv_timings timings;
+    if (ioctl(fd, VIDIOC_QUERY_DV_TIMINGS, &timings) == 0) {
+        width = timings.bt.width;
+        height = timings.bt.height;
+        std::cout << "Dynamically detected signal: " << width << "x" << height << std::endl;
+    } else {
+        std::cerr << "Warning: Could not query DV timings. Using default: " 
+                  << width << "x" << height << std::endl;
+    }
+
     struct v4l2_format fmt = {};
     fmt.type               = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width      = width;
@@ -45,7 +56,11 @@ bool CaptureDevice::configureFormat() {
         return false;
     }
 
-    std::cout << "Format set to " << width << "x" << height
+    // Update dimensions in case the driver adjusted them
+    width = fmt.fmt.pix.width;
+    height = fmt.fmt.pix.height;
+
+    std::cout << "Format set and confirmed to " << width << "x" << height
               << " on " << devicePath << std::endl;
     return true;
 }
