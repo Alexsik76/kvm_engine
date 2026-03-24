@@ -56,12 +56,9 @@ int main() {
     fds[1].fd     = encoder.getFd();
     fds[1].events = POLLIN;
 
-    int timeout_counter = 0;
-    const int MAX_TIMEOUTS = 10; 
-
     try {
         while (keepRunning) {
-            int ret = poll(fds, 2, 200);
+            int ret = poll(fds, 2, 1000); // 1s timeout for lower CPU when idle
             
             if (ret < 0) {
                 if (errno == EINTR) continue; 
@@ -70,11 +67,8 @@ int main() {
             }
 
             if (ret == 0) {
-                timeout_counter++;
-                if (timeout_counter >= MAX_TIMEOUTS) {
-                    std::cerr << "Signal lost (consecutive timeouts). Exiting to orchestrator." << std::endl;
-                    break;
-                }
+                // Keep the process alive even if there's no signal.
+                // This prevents MediaMTX from dropping the stream source.
                 continue;
             }
 
@@ -82,8 +76,6 @@ int main() {
                 std::cerr << "Capture device disconnected or fatal hardware error. Exiting." << std::endl;
                 break;
             }
-
-            timeout_counter = 0;
 
             if (fds[0].revents & POLLIN) {
                 uint32_t       bytes_used = 0;
@@ -95,11 +87,10 @@ int main() {
                 }
             }
 
-            {
-                int enc_out_idx = encoder.dequeueOutputBuffer();
-                if (enc_out_idx != -1) {
-                    capture.queueBuffer(enc_out_idx);
-                }
+            // Internal feedback loop
+            int enc_out_idx = encoder.dequeueOutputBuffer();
+            if (enc_out_idx != -1) {
+                capture.queueBuffer(enc_out_idx);
             }
 
             if (fds[1].revents & POLLIN) {
